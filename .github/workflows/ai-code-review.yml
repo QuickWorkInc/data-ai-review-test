@@ -20,8 +20,10 @@ jobs:
       - name: Get PR diff
         id: diff
         run: |
-          # ベースブランチとの差分を取得（最大50000文字に制限）
-          git diff origin/${{ github.base_ref }}...HEAD -- '*.py' '*.ts' '*.js' '*.go' '*.java' | head -c 50000 > /tmp/pr_diff.txt
+          # 全ファイルの差分を取得（最大50000文字に制限）
+          git diff origin/${{ github.base_ref }}...HEAD | head -c 50000 > /tmp/pr_diff.txt
+          DIFF_SIZE=$(wc -c < /tmp/pr_diff.txt)
+          echo "Diff size: $DIFF_SIZE bytes"
           echo "has_diff=$([ -s /tmp/pr_diff.txt ] && echo true || echo false)" >> $GITHUB_OUTPUT
 
       - name: Run Claude Code Review
@@ -36,7 +38,7 @@ jobs:
           REQUEST_BODY=$(jq -n \
             --arg diff "$DIFF" \
             '{
-              model: "claude-sonnet-4-6",
+              model: "claude-opus-4-5",
               max_tokens: 2048,
               messages: [{
                 role: "user",
@@ -50,8 +52,13 @@ jobs:
             -H "content-type: application/json" \
             -d "$REQUEST_BODY")
 
+          # デバッグ: エラー内容を確認（APIキーは含まれない）
+          echo "API response type: $(echo "$RESPONSE" | jq -r '.type // "unknown"')"
+          echo "API error: $(echo "$RESPONSE" | jq -r '.error.message // "none"')"
+
           # レビュー結果をファイルに保存（outputs経由の文字列展開を避ける）
-          echo "$RESPONSE" | jq -r '.content[0].text // "APIエラーが発生しました"' > /tmp/review_result.txt
+          echo "$RESPONSE" | jq -r '.content[0].text // ("APIエラー: " + (.error.message // "不明なエラー"))' > /tmp/review_result.txt
+          cat /tmp/review_result.txt
 
       - name: Post review comment
         uses: actions/github-script@v7
@@ -69,7 +76,7 @@ jobs:
               reviewText = fs.readFileSync('/tmp/review_result.txt', 'utf8').trim();
             }
 
-            const body = `## 🤖 AI Code Review (Claude)\n\n${reviewText}\n\n---\n*このレビューはClaude Sonnet 4.6によって自動生成されました。*`;
+            const body = `## 🤖 AI Code Review (Claude)\n\n${reviewText}\n\n---\n*このレビューはClaude Opus 4.5によって自動生成されました。*`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
