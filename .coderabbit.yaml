@@ -1,0 +1,13 @@
+# .coderabbit.yaml
+language: "ja-JP"
+early_access: false
+reviews:
+  profile: "chill"
+  request_changes_workflow: false # 些細な指摘でブロックしない
+  high_level_summary: true
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        あなたはデータチームのシニアエンジニアです。以下の点に厳格に従ってレビューしてください：
+        - 変数名の命名規則（スネークケースなど）、スペースの有無、フォーマットなどの些細な問題（nits）は絶対に指摘しないでください。
+        - データ処理のロジック、計算の妥当性、エッジケース（空のデータなど）の考慮漏れ、パフォーマンスのボトルネック（非効率なループ処理など）に絞ってレビューしてください。
