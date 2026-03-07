@@ -21,51 +21,55 @@ jobs:
         id: diff
         run: |
           # ベースブランチとの差分を取得（最大50000文字に制限）
-          DIFF=$(git diff origin/${{ github.base_ref }}...HEAD -- '*.py' '*.ts' '*.js' '*.go' '*.java' | head -c 50000)
-          echo "DIFF<<EOF_DIFF" >> $GITHUB_OUTPUT
-          echo "$DIFF" >> $GITHUB_OUTPUT
-          echo "EOF_DIFF" >> $GITHUB_OUTPUT
+          git diff origin/${{ github.base_ref }}...HEAD -- '*.py' '*.ts' '*.js' '*.go' '*.java' | head -c 50000 > /tmp/pr_diff.txt
+          echo "has_diff=$([ -s /tmp/pr_diff.txt ] && echo true || echo false)" >> $GITHUB_OUTPUT
 
       - name: Run Claude Code Review
         id: review
+        if: steps.diff.outputs.has_diff == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          DIFF='${{ steps.diff.outputs.DIFF }}'
+          DIFF=$(cat /tmp/pr_diff.txt)
 
-          if [ -z "$DIFF" ]; then
-            echo "REVIEW=レビュー対象の変更がありません。" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+          # jqでJSONを安全に組み立て（シェルインジェクション回避）
+          REQUEST_BODY=$(jq -n \
+            --arg diff "$DIFF" \
+            '{
+              model: "claude-sonnet-4-6",
+              max_tokens: 2048,
+              messages: [{
+                role: "user",
+                content: ("あなたはシニアエンジニアです。以下のコード差分をレビューしてください。\n\n【レビュー方針】\n- 変数名の命名規則・フォーマットなどのnitsは指摘しない\n- データ処理ロジックの欠陥、ゼロ除算・空データなどのエッジケース、パフォーマンスのボトルネックを重点的に確認\n- 問題があれば具体的な修正案を提示\n- 問題がなければ「問題なし」と簡潔に返答\n- 回答は日本語で\n\n## 差分\n```\n" + $diff + "\n```")
+              }]
+            }')
 
-          # Claude APIへリクエスト
           RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
             -H "content-type: application/json" \
-            -d "$(jq -n \
-              --arg diff "$DIFF" \
-              '{
-                model: "claude-sonnet-4-6",
-                max_tokens: 2048,
-                messages: [{
-                  role: "user",
-                  content: ("あなたはシニアエンジニアです。以下のコード差分をレビューしてください。\n\n【レビュー方針】\n- 変数名の命名規則・フォーマットなどのnitsは指摘しない\n- データ処理ロジックの欠陥、ゼロ除算・空データなどのエッジケース、パフォーマンスのボトルネックを重点的に確認\n- 問題があれば具体的な修正案を提示\n- 問題がなければ「問題なし」と簡潔に返答\n- 回答は日本語で\n\n## 差分\n```\n" + $diff + "\n```")
-                }]
-              }'
-            )"
+            -d "$REQUEST_BODY")
 
-          REVIEW=$(echo "$RESPONSE" | jq -r '.content[0].text // "APIエラーが発生しました"')
-          echo "REVIEW<<EOF_REVIEW" >> $GITHUB_OUTPUT
-          echo "$REVIEW" >> $GITHUB_OUTPUT
-          echo "EOF_REVIEW" >> $GITHUB_OUTPUT
+          # レビュー結果をファイルに保存（outputs経由の文字列展開を避ける）
+          echo "$RESPONSE" | jq -r '.content[0].text // "APIエラーが発生しました"' > /tmp/review_result.txt
 
       - name: Post review comment
         uses: actions/github-script@v7
+        env:
+          HAS_DIFF: ${{ steps.diff.outputs.has_diff }}
         with:
           script: |
-            const review = `${{ steps.review.outputs.REVIEW }}`;
-            const body = `## 🤖 AI Code Review (Claude)\n\n${review}\n\n---\n*このレビューはClaude Sonnet 4.6によって自動生成されました。*`;
+            const fs = require('fs');
+
+            let reviewText;
+            if (process.env.HAS_DIFF !== 'true') {
+              reviewText = 'レビュー対象の変更がありません。';
+            } else {
+              // ファイルから読み込み（outputs経由のインジェクションを回避）
+              reviewText = fs.readFileSync('/tmp/review_result.txt', 'utf8').trim();
+            }
+
+            const body = `## 🤖 AI Code Review (Claude)\n\n${reviewText}\n\n---\n*このレビューはClaude Sonnet 4.6によって自動生成されました。*`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
