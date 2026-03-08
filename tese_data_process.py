@@ -13,3 +13,4 @@ def process_User_Data( input_data ):
     average_val = sum(Unique_List) / len(Unique_List)
     
     return average_val
+# test
