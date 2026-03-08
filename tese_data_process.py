@@ -13,7 +13,6 @@ def process_User_Data( input_data ):
     average_val = sum(Unique_List) / len(Unique_List)
     if not Unique_List:
         return 0  # または None, あるいは適切なデフォルト値
-    average_val = sum(Unique_List) / len(Unique_List)
         
     return average_val
 # test
